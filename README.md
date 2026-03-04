@@ -11,7 +11,7 @@ docker compose up -d
 Airflow UI: http://localhost:8080  
 Tài khoản mặc định:
 - Username: `admin`
-- Password: `admin` (đổi trong `config/simple_auth_manager_passwords.json`)
+- Password: `admin` (đổi trong `airflow/config/simple_auth_manager_passwords.json`)
 
 ## Xem log
 ```bash
@@ -44,6 +44,32 @@ Mapping local folders:
 - Source config: `./sftp-source/config`
 - Target data: `./sftp-target/data`
 - Target config: `./sftp-target/config`
+
+## DAG đồng bộ SFTP
+DAG hiện tại: `sftp_sync` tại `airflow/dags/sftp_sync_dag.py`.
+
+Đặc tính orchestration:
+- Đồng bộ một chiều: source -> target
+- Giữ nguyên cấu trúc thư mục
+- Append-only (không propagate delete)
+- Incremental + idempotent (so sánh `size`/`mtime`)
+- Dynamic task mapping theo batch để scale
+
+Biến cấu hình chính (trong `.env`):
+- `AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://airflow-apiserver:8080/execution/`
+- `AIRFLOW__API__BASE_URL=http://airflow-apiserver:8080`
+- `SFTP_SYNC_SOURCE_CONN_ID=sftp_source`
+- `SFTP_SYNC_TARGET_CONN_ID=sftp_target`
+- `SFTP_SYNC_SOURCE_BASE_PATH=/a`
+- `SFTP_SYNC_TARGET_BASE_PATH=/a`
+- `SFTP_SYNC_BATCH_SIZE=500`
+- `SFTP_SYNC_SCHEDULE=@daily`
+
+Trigger thủ công với override runtime config:
+```bash
+docker compose exec airflow-apiserver airflow dags trigger sftp_sync \
+	--conf '{"source_conn_id":"sftp_source","target_conn_id":"sftp_target","source_base_path":"/a","target_base_path":"/a","batch_size":200}'
+```
 
 ## Ghi chú
 - Phiên bản image: `apache/airflow:3.1.7`

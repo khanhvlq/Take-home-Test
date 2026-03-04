@@ -15,7 +15,7 @@ if ! docker compose version >/dev/null 2>&1; then
 fi
 
 echo "Starting all services from docker-compose.yml..."
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose-sftp.yml up -d
 
 echo "Services status:"
 docker compose ps
