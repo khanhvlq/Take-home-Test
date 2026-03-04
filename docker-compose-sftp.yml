@@ -1,0 +1,24 @@
+services:
+  sftp-source:
+    image: atmoz/sftp:latest
+    container_name: sftp-source
+    restart: unless-stopped
+    ports:
+      - "2222:22"
+    command: source:source123:1001
+    volumes:
+      - ./sftp-source/data:/home/source/data
+      - ./sftp-source/data/a:/home/source/a
+      - ./sftp-source/config:/etc/sftp.d
+
+  sftp-target:
+    image: atmoz/sftp:latest
+    container_name: sftp-target
+    restart: unless-stopped
+    ports:
+      - "2223:22"
+    command: target:target123:1002
+    volumes:
+      - ./sftp-target/data:/home/target/data
+      - ./sftp-target/data/a:/home/target/a
+      - ./sftp-target/config:/etc/sftp.d

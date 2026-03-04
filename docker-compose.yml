@@ -42,7 +42,14 @@ services:
     environment:
       <<: *airflow-common-env
       _AIRFLOW_DB_MIGRATE: ${_AIRFLOW_DB_MIGRATE:-true}
-    command: ["bash", "-c", "airflow db migrate"]
+    command:
+      - "bash"
+      - "-c"
+      - |
+        airflow db migrate
+        if [ -f /opt/airflow/config/connection.json ]; then
+          airflow connections import /opt/airflow/config/connection.json || true
+        fi
 
   airflow-apiserver:
     <<: *airflow-common
