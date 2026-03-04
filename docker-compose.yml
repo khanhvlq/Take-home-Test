@@ -1,0 +1,107 @@
+x-airflow-common: &airflow-common
+  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.1.7}
+  user: "${AIRFLOW_UID:-50000}:0"
+  env_file:
+    - ${ENV_FILE_PATH:-.env}
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: ${AIRFLOW__CORE__EXECUTOR:-CeleryExecutor}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:-sqlite:////opt/airflow/data/airflow.db}
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: ${AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS:-admin:ADMIN}
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: ${AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE:-/opt/airflow/config/simple_auth_manager_passwords.json}
+    AIRFLOW__CELERY__BROKER_URL: ${AIRFLOW__CELERY__BROKER_URL:-redis://redis:6379/0}
+    AIRFLOW__CELERY__RESULT_BACKEND: ${AIRFLOW__CELERY__RESULT_BACKEND:-db+sqlite:////opt/airflow/data/airflow.db}
+    AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES:-false}
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: ${AIRFLOW__WEBSERVER__EXPOSE_CONFIG:-true}
+    AIRFLOW_CONFIG: ${AIRFLOW_CONFIG:-/opt/airflow/config/airflow.cfg}
+    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
+  volumes:
+    - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
+    - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
+    - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
+    - ${AIRFLOW_PROJ_DIR:-.}/data:/opt/airflow/data
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  redis:
+    image: ${REDIS_IMAGE_NAME:-redis:7.2-bookworm}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 30s
+      retries: 10
+      start_period: 10s
+
+  airflow-init:
+    <<: *airflow-common
+    user: "0:0"
+    restart: "no"
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: ${_AIRFLOW_DB_MIGRATE:-true}
+    command: ["bash", "-c", "airflow db migrate"]
+
+  airflow-apiserver:
+    <<: *airflow-common
+    container_name: ${AIRFLOW_APISERVER_CONTAINER_NAME:-airflow-apiserver}
+    command: api-server
+    restart: unless-stopped
+    ports:
+      - "${AIRFLOW_WEBSERVER_PORT:-8080}:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: ${AIRFLOW_SCHEDULER_CONTAINER_NAME:-airflow-scheduler}
+    command: scheduler
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: ${AIRFLOW_DAG_PROCESSOR_CONTAINER_NAME:-airflow-dag-processor}
+    command: dag-processor
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-triggerer:
+    <<: *airflow-common
+    container_name: ${AIRFLOW_TRIGGERER_CONTAINER_NAME:-airflow-triggerer}
+    command: triggerer
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-worker:
+    <<: *airflow-common
+    container_name: ${AIRFLOW_WORKER_CONTAINER_NAME:-airflow-worker}
+    command: celery worker
+    restart: unless-stopped
+    environment:
+      <<: *airflow-common-env
+      DUMB_INIT_SETSID: ${DUMB_INIT_SETSID:-0}
+    depends_on:
+      redis:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-apiserver:
+        condition: service_started
