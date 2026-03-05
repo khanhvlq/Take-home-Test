@@ -48,6 +48,47 @@ Mapping local folders:
 ## DAG đồng bộ SFTP
 DAG hiện tại: `sftp_sync` tại `airflow/dags/sftp_sync_dag.py`.
 
+## Thư viện connection dùng chung (plugin)
+Thư viện mới tại `airflow/plugins/connection_lib` (ngang cấp với `sftp_sync_lib`) cho phép import/inherit để tái sử dụng nhiều backend.
+
+Các backend mặc định đã có:
+- `sftp`
+- `s3`
+- `postgres`
+
+Ví dụ dùng nhanh (chỉ truyền Airflow connection id):
+
+```python
+from sftp_sync_lib.connection_lib import get_sftp_hook, get_s3_hook, get_postgres_hook
+
+sftp_hook = get_sftp_hook("sftp_source")
+s3_hook = get_s3_hook("aws_default")
+pg_hook = get_postgres_hook("postgres_default")
+```
+
+Generic factory:
+
+```python
+from sftp_sync_lib.connection_lib import get_hook
+
+hook = get_hook(conn_id="sftp_source", conn_type="sftp")
+client = hook.get_conn()
+```
+
+Đăng ký backend mới (inherit):
+
+```python
+from sftp_sync_lib.connection_lib import ConnectionProvider, register_connection_provider
+
+class MyProvider(ConnectionProvider):
+	conn_type = "my_backend"
+
+	def get_hook(self, conn_id: str, **hook_kwargs):
+		...
+
+register_connection_provider(MyProvider())
+```
+
 Đặc tính orchestration:
 - Đồng bộ một chiều: source -> target
 - Giữ nguyên cấu trúc thư mục

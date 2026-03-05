@@ -1,7 +1,7 @@
 __pycache__/
 *.pyc
-logs/*
-!logs/.gitkeep
+airflow/logs/**/*
+!airflow/logs/.gitkeep
 data/*
 !data/.gitkeep
 .env
