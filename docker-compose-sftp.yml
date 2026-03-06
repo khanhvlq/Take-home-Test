@@ -1,5 +1,6 @@
 services:
   sftp-source:
+    platform: linux/amd64
     image: atmoz/sftp:latest
     container_name: sftp-source
     restart: unless-stopped
@@ -12,6 +13,7 @@ services:
       - ./sftp-source/config:/etc/sftp.d
 
   sftp-target:
+    platform: linux/amd64
     image: atmoz/sftp:latest
     container_name: sftp-target
     restart: unless-stopped
