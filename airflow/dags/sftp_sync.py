@@ -27,6 +27,7 @@ config = SFTPSyncDagConfig(
     target_base_path="/a",
     max_file_size_mb=256,
     transformations=("noop",),
+    catchup=False,
 )
 
 connections = SFTPSyncConnectionConfig(
