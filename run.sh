@@ -15,6 +15,7 @@ if ! docker compose version >/dev/null 2>&1; then
 fi
 
 export ENV_FILE_PATH="$SCRIPT_DIR/dev.env"
+export AIRFLOW_PROJ_DIR="./airflow"
 
 # Ensure required directories exist
 mkdir -p airflow/config airflow/dags airflow/logs airflow/plugins airflow/data
