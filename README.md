@@ -296,6 +296,7 @@ docker compose exec airflow-webserver airflow dags trigger sftp_sync
 
 | Issue | Solution |
 |-------|----------|
+| **Admin user not found** | Run `./run.sh` again to ensure initialization completes. Or create manually: `echo '{"admin": "admin"}' > airflow/config/simple_auth_manager_passwords.json && docker compose restart` |
 | **DAG not visible** | `docker compose exec airflow-scheduler airflow dags list-import-errors` |
 | **Tasks stuck in queued** | Check workers: `docker compose ps airflow-worker` then `docker compose up --scale airflow-worker=5 -d` |
 | **Module import errors** | Ensure plugin __init__.py files exist: `touch airflow/plugins/{,core,sftp_sync}/__init__.py` |
