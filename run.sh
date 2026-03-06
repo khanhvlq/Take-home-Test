@@ -14,6 +14,8 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
+export ENV_FILE_PATH="$SCRIPT_DIR/dev.env"
+
 echo "Starting all services from docker-compose.yml..."
 docker compose -f docker-compose.yml -f docker-compose-sftp.yml up -d
 
