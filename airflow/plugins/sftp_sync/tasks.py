@@ -3,107 +3,78 @@ from __future__ import annotations
 import json
 import os
 import posixpath
-import stat as statlib
 import tempfile
 from typing import Any
 
 from airflow.exceptions import AirflowException, AirflowFailException
-from airflow.providers.sftp.hooks.sftp import SFTPHook
+
+from core.io_adapters import close_adapter, create_source_adapter, create_target_adapter
+from core.transformers import apply_transformations, normalize_transformations
 
 
-STAGING_ROOT = os.getenv("SFTP_SYNC_STAGING_ROOT", "/opt/airflow/data/sftp_sync_staging")
-
-
-def _list_remote_files(sftp_client: Any, root_path: str) -> list[dict[str, Any]]:
-    queue = [root_path.rstrip("/") or "/"]
-    files: list[dict[str, Any]] = []
-
-    while queue:
-        current_dir = queue.pop()
-        for entry in sftp_client.listdir_attr(current_dir):
-            full_path = posixpath.join(current_dir, entry.filename)
-            if statlib.S_ISDIR(entry.st_mode):
-                queue.append(full_path)
-            elif statlib.S_ISREG(entry.st_mode):
-                files.append(
-                    {
-                        "path": full_path,
-                        "size": int(getattr(entry, "st_size", 0) or 0),
-                        "mtime": int(getattr(entry, "st_mtime", 0) or 0),
-                    }
-                )
-    return files
-
-
-def _ensure_target_dirs(sftp_client: Any, file_path: str) -> None:
-    parent = posixpath.dirname(file_path)
-    if not parent or parent == "/":
-        return
-
-    current = "/"
-    for segment in [part for part in parent.split("/") if part]:
-        current = posixpath.join(current, segment)
-        try:
-            sftp_client.stat(current)
-        except OSError:
-            sftp_client.mkdir(current)
-
-
-def _target_is_up_to_date(sftp_client: Any, target_path: str, source_size: int, source_mtime: int) -> bool:
-    try:
-        target_stat = sftp_client.stat(target_path)
-    except OSError:
-        return False
-
-    return (
-        int(getattr(target_stat, "st_size", -1)) == int(source_size)
-        and int(getattr(target_stat, "st_mtime", -1)) >= int(source_mtime)
-    )
+STAGING_ROOT = "/opt/airflow/data/sftp_sync_staging"
 
 
 def checker(
+    source_conn_type: str,
     source_conn_id: str,
+    target_conn_type: str,
     target_conn_id: str,
     source_base_path: str,
     target_base_path: str,
     batch_size: int,
+    max_file_size_mb: int,
+    transformations: list[str] | tuple[str, ...] | None = None,
     **context: Any,
 ) -> list[dict[str, Any]]:
     dag_run = context.get("dag_run")
     conf = (dag_run.conf if dag_run else {}) or {}
 
+    source_conn_type = conf.get("source_conn_type", source_conn_type)
     source_conn_id = conf.get("source_conn_id", source_conn_id)
+    target_conn_type = conf.get("target_conn_type", target_conn_type)
     target_conn_id = conf.get("target_conn_id", target_conn_id)
     source_base_path = conf.get("source_base_path", source_base_path)
     target_base_path = conf.get("target_base_path", target_base_path)
     batch_size = int(conf.get("batch_size", batch_size))
+    max_file_size_mb = int(conf.get("max_file_size_mb", max_file_size_mb))
+    transformations = normalize_transformations(conf.get("transformations", transformations))
 
     if batch_size <= 0:
         raise AirflowException("batch_size must be greater than 0")
 
-    source_hook = SFTPHook(ssh_conn_id=source_conn_id)
-    target_hook = SFTPHook(ssh_conn_id=target_conn_id)
-    source_client = source_hook.get_conn()
-    target_client = target_hook.get_conn()
+    max_file_size_bytes = max_file_size_mb * 1024 * 1024 if max_file_size_mb > 0 else None
+
+    source_adapter = create_source_adapter(conn_type=source_conn_type, conn_id=source_conn_id)
+    target_adapter = create_target_adapter(conn_type=target_conn_type, conn_id=target_conn_id)
 
     try:
-        source_files = _list_remote_files(source_client, source_base_path)
+        source_files = source_adapter.list_files(source_base_path)
         pending: list[dict[str, Any]] = []
+        oversized: list[str] = []
 
         for source_file in source_files:
-            rel_path = posixpath.relpath(source_file["path"], source_base_path)
-            target_path = posixpath.join(target_base_path, rel_path)
+            if max_file_size_bytes is not None and source_file.size > max_file_size_bytes:
+                oversized.append(source_file.path)
+                continue
 
-            if _target_is_up_to_date(target_client, target_path, source_file["size"], source_file["mtime"]):
+            rel_path = posixpath.relpath(source_file.path, source_base_path)
+            target_path = posixpath.join(target_base_path, rel_path)
+            target_stat = target_adapter.stat(target_path)
+
+            if target_stat and target_stat.size == source_file.size and target_stat.mtime >= source_file.mtime:
                 continue
 
             pending.append(
                 {
+                    "source_conn_type": source_conn_type,
                     "source_conn_id": source_conn_id,
+                    "target_conn_type": target_conn_type,
                     "target_conn_id": target_conn_id,
-                    "source_path": source_file["path"],
+                    "source_path": source_file.path,
                     "target_path": target_path,
-                    "source_mtime": int(source_file["mtime"]),
+                    "source_mtime": int(source_file.mtime),
+                    "transformations": transformations,
                 }
             )
 
@@ -113,25 +84,30 @@ def checker(
                     "event": "checker",
                     "source_file_count": len(source_files),
                     "pending_file_count": len(pending),
+                    "oversized_file_count": len(oversized),
+                    "max_file_size_mb": max_file_size_mb,
                     "batch_size": batch_size,
                 }
             )
         )
         return pending
     finally:
-        source_client.close()
-        target_client.close()
+        close_adapter(source_adapter)
+        close_adapter(target_adapter)
 
 
 def download(
+    source_conn_type: str,
     source_conn_id: str,
+    target_conn_type: str,
     target_conn_id: str,
     source_path: str,
     target_path: str,
     source_mtime: int,
+    transformations: list[str] | None = None,
     **context: Any,
 ) -> dict[str, Any]:
-    source_hook = SFTPHook(ssh_conn_id=source_conn_id)
+    source_adapter = create_source_adapter(conn_type=source_conn_type, conn_id=source_conn_id)
 
     ti = context.get("ti")
     run_id = getattr(ti, "run_id", "manual")
@@ -139,66 +115,72 @@ def download(
     staging_dir = os.path.join(STAGING_ROOT, safe_run_id)
     os.makedirs(staging_dir, exist_ok=True)
 
-    file_descriptor, local_filepath = tempfile.mkstemp(prefix="airflow_sftp_sync_", dir=staging_dir)
+    file_descriptor, local_filepath = tempfile.mkstemp(prefix="airflow_sync_", dir=staging_dir)
     os.close(file_descriptor)
 
-    source_hook.retrieve_file(remote_full_path=source_path, local_full_path=local_filepath)
+    try:
+        source_adapter.retrieve_file(remote_path=source_path, local_path=local_filepath)
+    finally:
+        close_adapter(source_adapter)
 
     result = {
+        "target_conn_type": target_conn_type,
         "target_conn_id": target_conn_id,
         "target_path": target_path,
         "source_mtime": source_mtime,
         "local_filepath": local_filepath,
+        "transformations": normalize_transformations(transformations),
     }
     print(json.dumps({"event": "download", **result}))
     return result
 
 
 def upload(
+    target_conn_type: str,
     target_conn_id: str,
     target_path: str,
     source_mtime: int,
     local_filepath: str,
+    transformations: list[str] | None = None,
     **_: Any,
 ) -> dict[str, Any]:
     if not os.path.exists(local_filepath):
         raise AirflowException(f"Staging file not found: {local_filepath}")
 
-    target_hook = SFTPHook(ssh_conn_id=target_conn_id)
-    target_client = target_hook.get_conn()
+    target_adapter = create_target_adapter(conn_type=target_conn_type, conn_id=target_conn_id)
     uploaded = False
+    transformed_local_path = local_filepath
 
     try:
-        _ensure_target_dirs(target_client, target_path)
-        target_hook.store_file(remote_full_path=target_path, local_full_path=local_filepath)
+        transformed_local_path = apply_transformations(local_filepath, normalize_transformations(transformations))
+
+        target_adapter.ensure_parent_dirs(target_path)
+        target_adapter.store_file(local_path=transformed_local_path, remote_path=target_path)
+
         try:
-            target_client.utime(target_path, (source_mtime, source_mtime))
-        except OSError:
-            refreshed_client = target_hook.get_conn()
-            try:
-                refreshed_client.utime(target_path, (source_mtime, source_mtime))
-            except OSError as exc:
-                print(
-                    json.dumps(
-                        {
-                            "event": "upload_utime_skipped",
-                            "target_path": target_path,
-                            "reason": str(exc),
-                        }
-                    )
+            target_adapter.set_mtime(path=target_path, mtime=source_mtime)
+        except OSError as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "upload_mtime_skipped",
+                        "target_path": target_path,
+                        "reason": str(exc),
+                    }
                 )
-            finally:
-                refreshed_client.close()
+            )
 
         uploaded = True
         return {"target_path": target_path, "uploaded": 1}
     finally:
-        target_client.close()
+        close_adapter(target_adapter)
         if uploaded:
-            try:
-                os.remove(local_filepath)
-            except OSError:
-                pass
+            for candidate in {local_filepath, transformed_local_path}:
+                try:
+                    if os.path.exists(candidate):
+                        os.remove(candidate)
+                except OSError:
+                    pass
 
 
 def recheck(checker_task_id: str = "checker", upload_task_id: str = "upload", **context: Any) -> dict[str, Any]:

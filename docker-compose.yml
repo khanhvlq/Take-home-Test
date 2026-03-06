@@ -21,10 +21,31 @@ x-airflow-common: &airflow-common
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/data:/opt/airflow/data
   depends_on:
+    postgres:
+      condition: service_healthy
     redis:
       condition: service_healthy
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: airflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 30s
+      retries: 10
+      start_period: 10s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
   redis:
     image: ${REDIS_IMAGE_NAME:-redis:7.2-bookworm}
     restart: unless-stopped
@@ -50,15 +71,22 @@ services:
         if [ -f /opt/airflow/config/connection.json ]; then
           airflow connections import /opt/airflow/config/connection.json || true
         fi
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
-  airflow-apiserver:
+  airflow-webserver:
     <<: *airflow-common
-    container_name: ${AIRFLOW_APISERVER_CONTAINER_NAME:-airflow-apiserver}
+    container_name: ${AIRFLOW_WEBSERVER_CONTAINER_NAME:-airflow-webserver}
     command: api-server
     restart: unless-stopped
     ports:
       - "${AIRFLOW_WEBSERVER_PORT:-8080}:8080"
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       airflow-init:
@@ -70,6 +98,8 @@ services:
     command: scheduler
     restart: unless-stopped
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       airflow-init:
@@ -81,6 +111,8 @@ services:
     command: dag-processor
     restart: unless-stopped
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       airflow-init:
@@ -92,6 +124,8 @@ services:
     command: triggerer
     restart: unless-stopped
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       airflow-init:
@@ -106,9 +140,14 @@ services:
       <<: *airflow-common-env
       DUMB_INIT_SETSID: ${DUMB_INIT_SETSID:-0}
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
-      airflow-apiserver:
+      airflow-webserver:
         condition: service_started
+
+volumes:
+  postgres_data:
