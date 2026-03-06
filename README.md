@@ -268,21 +268,21 @@ docker compose exec airflow-webserver airflow dags list-runs sftp_sync
 ### Functional Test
 ```bash
 # Create test files on source
-docker exec sftp-source sh -c 'echo "test" > /home/source/a/test.txt'
+docker exec sftp-source sh -c 'mkdir -p /home/source/a/b/c && echo "test" > /home/source/a/b/c/test.txt'
 
 # Run sync
 docker compose exec airflow-webserver airflow dags trigger sftp_sync
 sleep 120
 
 # Verify on target
-docker exec sftp-target cat /home/target/a/test.txt
+docker exec sftp-target cat /home/target/a/b/c/test.txt
 # Expected: "test"
 ```
 
 ### Load Test (1000 files)
 ```bash
 # Generate files
-docker exec sftp-source sh -c 'for i in $(seq 1 1000); do echo $i > /home/source/a/file_$i.txt; done'
+docker exec sftp-source sh -c 'mkdir -p /home/source/a/b/c && for i in $(seq 1 1000); do echo $i > /home/source/a/b/c/file_$i.txt; done'
 
 # Run sync
 docker compose exec airflow-webserver airflow dags trigger sftp_sync
