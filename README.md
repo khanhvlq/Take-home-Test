@@ -314,155 +314,30 @@ Target SLAs (based on 1 worker, 256MB max file):
 
 ## Production Deployment Checklist (Large-Scale Sync)
 
-### 🐳 Container Orchestration
-- [ ] **Kubernetes Deployment**
-  - Deploy Airflow components as Kubernetes Helm charts (scheduler, webserver, worker, triggerer as separate pods)
-  - Use KubernetesExecutor or CeleryKubernetesExecutor for dynamic worker scaling
-  - Configure HPA (Horizontal Pod Autoscaler) to auto-scale workers based on queue depth
-  - Set resource requests/limits (CPU, memory) per pod type
-  - Use init containers to mount DAGs and plugins from ConfigMaps/volumes
-  
-- [ ] **PostgreSQL Migration**
-  - Replace RDS/managed PostgreSQL with dedicated instance (CloudSQL, RDS Aurora, managed Azure Database)
-  - Configure connection pooling (PgBouncer) for high concurrency
-  - Enable read replicas for Airflow metadata queries
-  - Setup automated backups with point-in-time recovery
-  - Configure metrics export to CloudWatch/Datadog
+### 🐳 Kubernetes Deployment
+- [ ] Deploy Airflow on Kubernetes (Helm charts: scheduler, webserver, worker, triggerer)
+- [ ] Use KubernetesExecutor or CeleryKubernetesExecutor for auto-scaling workers
+- [ ] Configure HPA (Horizontal Pod Autoscaler) based on queue depth
+- [ ] Setup managed PostgreSQL (RDS Aurora, CloudSQL) with connection pooling
 
-### 🚀 Storage & Connectors
-- [ ] **Object Storage Connectors** (S3/GCS/Azure Blob)
-  - Implement `S3SourceAdapter` and `S3TargetAdapter` using boto3
-  - Split large files using multipart upload for parallel throughput
-  - Use object metadata (ETag, version ID) for incremental detection
-  - Enable S3 Transfer Acceleration for cross-region speeds
-  - Cache remote file listings in Redis to avoid repeated API calls
+### 🚀 Object Storage Integration
+- [ ] Implement S3/GCS/Azure Blob adapters (multipart upload for parallelism)
+- [ ] Replace local staging with cloud storage bucket
+- [ ] Enable cross-region replication and S3 Transfer Acceleration
 
-- [ ] **Staging Strategy**
-  - Replace local staging with cloud object storage (S3/GCS staging bucket)
-  - Use SSD-backed Instance Store or EBS gp3 volumes for worker nodes
-  - Implement S3-to-S3 transfers using S3 Batch Operations for ultra-large datasets
-  - Archive old staging data to Glacier for cost optimization
-
-### ⚡ Transformation Layer
-- [ ] **Spark Integration** (for complex transformations)
-  - Add `SparkTransformer` that submits jobs to Spark cluster (EMR, Databricks, Spark on k8s)
-  - Use PySpark for columnar processing of large files before upload
-  - Enable adaptive query execution and partition pruning
-  - Monitor Spark job metrics (shuffle read/write, task duration) via SparkListener
-  - Example: `--conf '{"transformations": ["spark://compress_and_dedupe"]}'`
-
-- [ ] **Batch Processing Pipeline**
-  - Extend `transformers.py` to support batch operations:
-    - Compression (gzip, zstd, parquet)
-    - Deduplication (hash-based, bloom filter)
-    - Format conversion (CSV → Parquet, JSON → Avro)
-  - Chain multiple transformers with configurable ordering
+### ⚡ Spark for Transformations
+- [ ] Integrate Spark cluster (EMR, Databricks, or Spark on k8s)
+- [ ] Implement `SparkTransformer` for complex batch operations
+- [ ] Support transformations: compression, deduplication, format conversion
 
 ### 📊 Data Warehouse Integration
-- [ ] **Data Lake Connector**
-  - Add `DeltaLakeTargetAdapter` for Apache Delta Lake tables
-  - Implement `IcebergTargetAdapter` for Apache Iceberg format
-  - Auto-generate DataFrames with schema inference
-  - Support incremental merge operations (UPSERT) for idempotency
+- [ ] Add Delta Lake or Apache Iceberg connectors for data lake
+- [ ] Export lineage to Apache Atlas or Collibra
 
-- [ ] **Metadata & Lineage**
-  - Export DAG lineage to Apache Atlas or Collibra
-  - Integrate with data governance platforms
-  - Track data freshness SLAs via Airflow SLA sensors
-  - Publish schema changes to central catalog
-
-### 📈 Scaling for Large Volumes
-- [ ] **Dynamic Task Mapping**
-  - Increase `max_active_tasks` to 128-256 for high parallelism
-  - Implement task grouping to avoid Airflow metadata overload (group 1000 files per task)
-  - Use `TaskGroup` with dynamic expansion for better DAG clarity
-
-- [ ] **Distributed File Listing**
-  - Replace single `checker` task with distributed file scanner (map-reduce pattern)
-  - Partition source directory by prefix (e.g., `/data/[a-m]/` → worker1, `/data/n-z/` → worker2)
-  - Use Airflow `dynamic_task_mapping` or external Spark job for massive directorlies (10M+ files)
-
-- [ ] **Memory & CPU Tuning**
-  - Adjust Airflow task pool concurrency: `[core] max_active_tasks_per_dag = 512`
-  - Configure Celery worker concurrency: `--concurrency=16 --max-tasks-per-child=10`
-  - Use worker autoscaling with queue depth metrics
-
-### 🔒 Security & Compliance
-- [ ] **Secrets Management**
-  - Rotate SFTP/S3 credentials via AWS Secrets Manager / HashiCorp Vault
-  - Use temporary STS tokens for cloud storage access
-  - Encrypt connection parameters in PostgreSQL vault
-
-- [ ] **Data Encryption**
-  - Enable TLS 1.3 for all service-to-service communication
-  - Implement client-side encryption before upload (e.g., GPG, KMS)
-  - Setup field-level encryption for PII columns
-  - Audit access logs to centralized SIEM
-
-- [ ] **Network Isolation**
-  - Deploy Airflow in private VPC with NAT gateway for outbound
-  - Use VPC endpoints for S3/DynamoDB access (avoid internet traffic)
-  - Implement network policies (Kubernetes NetworkPolicy) for service mesh communication
-
-### 📡 Observability at Scale
-- [ ] **Metrics Export**
-  - Export Airflow metrics to Prometheus (scrape interval 15s)
-  - Add custom metrics: `files_synced`, `bytes_transferred`, `transform_duration_ms`
-  - Setup Grafana dashboards for real-time monitoring
-
-- [ ] **Distributed Tracing**
-  - Integrate with Jaeger/Datadog APM for request tracing
-  - Track file transfer latency end-to-end (checker → download → upload → recheck)
-  - Monitor Redis broker latency and memory usage
-
-- [ ] **Alerting**
-  - Alert on DAG SLA breach (e.g., sync should complete by 12 PM UTC)
-  - Alert on worker node failures or high CPU/memory usage
-  - Alert on S3/GCS API throttling errors
-  - Setup on-call rotation via PagerDuty
-
-### 💾 High-Availability & DR
-- [ ] **Multi-Region Deployment**
-  - Deploy Airflow scheduler in active-passive mode across regions
-  - Replicate metadata database via PostgreSQL streaming replication
-  - Use S3 cross-region replication for data lake buckets
-  - Implement disaster recovery runbook with RTO/RPO targets
-
-- [ ] **Backup & Recovery**
-  - Automate daily database backups with 30-day retention
-  - Implement incremental backups for large data volumes
-  - Test recovery procedures quarterly
-  - Store backup inventory in S3 with lifecycle policies
-
-### 🎯 Cost Optimization
-- [ ] **Infrastructure**
-  - Use Spot instances for Airflow workers (cost reduction: 70%)
-  - Right-size compute (start with m5.large, scale based on metrics)
-  - Leverage Compute Savings Plans or Reserved Instances for base load
-
-- [ ] **Storage**
-  - Archive completed syncs to S3 Intelligent-Tiering
-  - Delete staging data after S3 lifecycle expiry (7 days)
-  - Use S3 Transfer Acceleration only for latency-critical paths
-  - Monitor CloudFront caching hit ratios
-
-### ✅ Pre-Production Validation
-- [ ] **Load Testing Scenarios**
-  - Test with 100K+ files (benchmark parallelism limits)
-  - Test with geographic distribution (cross-region latency)
-  - Simulate 90% simultaneous success rate (chaos engineering)
-  - Profile memory leaks in long-running workers (24h+ stress test)
-
-- [ ] **Failover Testing**
-  - Kill scheduler pod during DAG run; verify recovery
-  - Simulate database connection timeout; verify retry
-  - Simulate partial S3 upload; verify idempotency
-  - Measure failover time from detection to recovery
-
-- [ ] **Cost Analysis**
-  - Estimate monthly spend: compute + storage + data transfer
-  - Calculate per-file cost: $/file_synced
-  - Benchmark alternative services (AWS DataSync, Azure Data Factory)
+### 📈 Scaling for 100M+ Files
+- [ ] Use dynamic task mapping with grouping (1000+ files per task)
+- [ ] Implement distributed file listing (map-reduce pattern)
+- [ ] Tune Celery concurrency and task pool settings
 
 ## License
 MIT
