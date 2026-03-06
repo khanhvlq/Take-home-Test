@@ -334,19 +334,11 @@ Target SLAs (based on 1 worker, 256MB max file):
 - [ ] Add Delta Lake or Apache Iceberg connectors for data lake
 - [ ] Export lineage to Apache Atlas or Collibra
 
-### 📈 Scaling for 100M+ Files
-- [ ] Use dynamic task mapping with grouping (1000+ files per task)
-- [ ] Implement distributed file listing (map-reduce pattern)
-- [ ] Tune Celery concurrency and task pool settings
+### � Celery Cluster
+- [ ] Deploy Celery workers across multiple machines/pods
+- [ ] Configure priority queues for SLA-critical tasks
+- [ ] Setup worker autoscaling based on task queue depth
+- [ ] Monitor worker health and implement heartbeat checks
 
 ## License
 MIT
-
----
-
-**For production deployment**, ensure:
-- [ ] Secrets management (AWS Secrets Manager / HashiCorp Vault)
-- [ ] Metrics export & alerting setup
-- [ ] Multi-region backup strategy
-- [ ] RBAC configuration for teams
-- [ ] Load testing with realistic file distribution
