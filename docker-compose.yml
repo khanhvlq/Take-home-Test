@@ -67,7 +67,7 @@ services:
       - "bash"
       - "-c"
       - |
-        # Create admin credentials file if not exists
+        # Ensure password file exists (created by run.sh but double-check)
         if [ ! -f /opt/airflow/config/simple_auth_manager_passwords.json ]; then
           echo "Creating admin user credentials..."
           echo '{"admin": "admin"}' > /opt/airflow/config/simple_auth_manager_passwords.json
